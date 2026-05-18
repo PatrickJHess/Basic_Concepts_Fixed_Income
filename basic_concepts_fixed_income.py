@@ -2052,10 +2052,7 @@ class FredReader:
             print(f"\u274C An error occurred: {e}")
             return None
 
-class StopExecution(Exception):
-    """Silently halts cell execution without a massive red traceback."""
-    def _render_traceback_(self):
-        return []
+
 
 def secure_key_setup(key_name="FRED_KEY"):
     """
