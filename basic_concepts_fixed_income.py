@@ -2166,32 +2166,57 @@ def secure_key_setup(key_name="FRED_KEY"):
                         <li>Paste the Name and your actual API Key.</li>
                         <li>Toggle <b>"Notebook access"</b> to <span style="color: #1a73e8; font-weight: bold;">ON (Blue)</span>.</li>
                     </ol>
-                    <button id="check-btn-{key_name}" style="margin-top: 15px; width: 100%; padding: 12px; background: #34a853; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: 0.2s;">
-                        &#10004;&#65039; I have added the key. Authenticate Now!
-                    </button>
+                    
+                    <div style="display: flex; gap: 10px; margin-top: 15px;">
+                        <button id="check-btn-{key_name}" style="flex: 2; padding: 12px; background: #34a853; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: 0.2s;">
+                            &#10004;&#65039; Authenticate Now
+                        </button>
+                        <button id="stop-btn-{key_name}" style="flex: 1; padding: 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: 0.2s;">
+                            &#10060; Stop
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <script>
-              // This JavaScript promise suspends Python until the user clicks the button
+<script>
+              // The Promise now listens to BOTH buttons and returns a command string
               window.promise_{key_name} = new Promise(function(resolve) {{
+                
                 document.getElementById('check-btn-{key_name}').onclick = function() {{
                   this.innerHTML = "&#8987; Authenticating...";
                   this.style.backgroundColor = "#2d9249";
                   this.style.pointerEvents = "none";
-                  resolve("clicked");
+                  document.getElementById('stop-btn-{key_name}').style.pointerEvents = "none";
+                  resolve("check"); // Signal Python to loop and check again
                 }};
+                
+                document.getElementById('stop-btn-{key_name}').onclick = function() {{
+                  this.innerHTML = "Stopping...";
+                  this.style.backgroundColor = "#c82333";
+                  this.style.pointerEvents = "none";
+                  document.getElementById('check-btn-{key_name}').style.pointerEvents = "none";
+                  resolve("stop"); // Signal Python to halt execution
+                }};
+                
               }});
             </script>
             """))
+            
             # --- THE PAUSE TRAP ---
-            # Python sleeps here seamlessly. No ugly inputs!
             try:
-                _ = output.eval_js(f"window.promise_{key_name}")
+                # Python sleeps here waiting for the JS string response
+                action = output.eval_js(f"window.promise_{key_name}")
+                
+                # If the user clicked Stop, break the script entirely
+                if action == "stop":
+                    clear_output()
+                    print("\n\u26A0\uFE0F Setup cancelled by user.")
+                    raise StopExecution
+                    
             except KeyboardInterrupt:
                 clear_output()
-                print("\n\u26A0\uFE0F Setup cancelled by user.")
-                return
+                print("\n\u26A0\uFE0F Setup cancelled by user (KeyboardInterrupt).")
+                raise StopExecution
     else:
         # --- JUPYTER / BINDER LOGIC ---
         target_file = f".{key_name.lower()}"
