@@ -11,15 +11,7 @@ includes shared functions
 
 """
 
-list_install=['numpy','pandas','openpyxl','pathvalidate',
-             'matplotlib','python-dateutil','holidays',
-            'ipynbname','bs4','pandas_market_calendars',
-             'scipy','pandas-datareader','pandas<3.0']
-content='\n'.join(list_install)
-with open('requirements.txt','w') as file:
- file.write(content)
-import subprocess
-subprocess.run(['pip install -q -r requirements.txt'],shell=True,  stdout=subprocess.DEVNULL)
+
 
 import requests
 import pandas as pd
