@@ -1,0 +1,14 @@
+# Ignore MyST build outputs
+_build/
+.myst/
+
+# Ignore Python/Jupyter junk
+.ipynb_checkpoints/
+__pycache__/
+.*
+!.gitignore
+fred/
+jupyter_one/
+Pricing_Risk/
+Term_Structure
+

@@ -1,0 +1,12 @@
+numpy
+pandas<3.0
+openpyxl
+pathvalidate
+matplotlib
+python-dateutil
+holidays
+ipynbname
+beautifulsoup4
+pandas_market_calendars
+scipy
+pandas-datareader as wb
