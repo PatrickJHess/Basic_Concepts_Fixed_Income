@@ -2033,10 +2033,15 @@ class FredReader:
             print(f"\u274C An error occurred: {e}")
             return None
 
+class StopExecution(Exception):
+    """Silently halts cell execution without a massive red traceback."""
+    def _render_traceback_(self):
+        return []
+
 def secure_key_setup(key_name="FRED_KEY"):
     """
-    The master UI for setting up API keys. Handles Colab, Local Jupyter, 
-    and Ephemeral (Binder) environments automatically.
+    The master UI for setting up API keys. Handles Colab, Local Jupyter,
+    and Ephemeral (Binder) environments automatically, with live validation.
     """
     try:
         from IPython.display import clear_output, display, HTML
@@ -2045,87 +2050,136 @@ def secure_key_setup(key_name="FRED_KEY"):
         display = lambda x: print(x)
         HTML = lambda x: x
 
+    # --- INTERNAL VALIDATION HELPER ---
+    def _validate_key(name, value):
+
+        name_upper = name.upper()
+
+        if "FRED" in name_upper:
+            print(f"🔒 Authenticating {name} with FRED servers...")
+            if len(value) != 32: return False
+            try:
+                url = f"https://api.stlouisfed.org/fred/series?series_id=GDP&api_key={value}&file_type=json"
+                return requests.get(url).status_code == 200
+            except Exception: return False
+
+        elif "ALPHA" in name_upper:
+            print(f"🔒 Authenticating {name} with AlphaVantage...")
+            try:
+                url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=IBM&apikey={value}"
+                resp = requests.get(url).json()
+                return "Error Message" not in resp
+            except Exception: return False
+
+        elif "MASSIVE" in name_upper:
+            print(f"🔒 Authenticating {name} with Massive reference servers...")
+            try:
+                url = f"https://api.massive.com/v3/reference/tickers?limit=1&apiKey={value}"
+                return requests.get(url).status_code == 200
+            except Exception: return False
+
+        else:
+            # The graceful bypass for custom keys
+            print(f"ℹ️ Note: '{name}' is not recognized as FRED, ALPHA, or MASSIVE.")
+            print(f"   Skipping live network validation. Key loaded directly.")
+            return True
+
     # 1. Detect Environment
     in_colab = 'google.colab' in sys.modules
     in_binder = 'BINDER_URL' in os.environ or 'BINDER_PORT' in os.environ
 
+
     if in_colab:
         from google.colab import userdata
-        
-        try:
-            # STATE 1: Fully Active
-            colab_key = userdata.get(key_name)
-            if colab_key:
-                os.environ[key_name] = colab_key
-                clear_output()
-                display(HTML(f"""
-                <div style="background-color: #d4edda; padding: 15px; border-radius: 8px; border-left: 6px solid #28a745; max-width: 600px;">
-                    <h4 style="margin-top: 0; color: #155724; margin-bottom: 5px;">&#10004;&#65039; Key Already Active!</h4>
-                    <p style="margin-top: 0; color: #155724; margin-bottom: 0;">We found <b>{key_name}</b> in your Colab Secrets and securely loaded it into the environment. You are ready to fetch data!</p>
-                </div>
-                """))
-                return
-                
-        except Exception as e:
-            # STATE 2: Locked (NotebookAccessError)
-            if "Access" in str(type(e).__name__): 
-                clear_output()
-                display(HTML(f"""
-                <div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 6px solid #ffc107; max-width: 600px;">
-                    <h4 style="margin-top: 0; color: #856404; margin-bottom: 5px;">&#128273; Activation Required</h4>
-                    <p style="margin-top: 0; color: #856404;">We found <b>{key_name}</b> in your Colab Secrets, but this notebook doesn't have permission to use it yet.</p>
-                    <ul style="color: #856404; margin-bottom: 0;">
-                        <li>Click the <b>Key Icon</b> (&#128273;) on the left sidebar.</li>
-                        <li>Find <b>{key_name}</b> and check the box next to <b>"Notebook access"</b>.</li>
-                        <li>Run this cell again!</li>
-                    </ul>
-                </div>
-                """))
-                return
-            pass # STATE 3: Doesn't exist. Pass down to the Wizard.
+        from google.colab import output
 
-        # --- STATE 3: THE SETUP WIZARD ---
-        display(HTML(f"""
-        <div style="font-family: sans-serif; max-width: 600px;">
-            <div id="wizard-box" style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; border-left: 6px solid #4285f4;">
-                <h3 style="margin-top: 0; color: #1a73e8;">&#128274; Secure Key Setup Wizard</h3>
-                
-                <div id="step1" style="margin-bottom: 15px;">
-                    <p><b>Step 1:</b> Click below to copy the required Secret Name:</p>
-                    <button onclick="navigator.clipboard.writeText('{key_name}'); this.innerHTML='&#9989; Copied!'; setTimeout(() => this.innerHTML='&#128203; Copy Name: {key_name}', 2000); document.getElementById('step1').style.opacity='0.5'; document.getElementById('step2').style.display='block';" style="padding: 8px 12px; background: white; color: #1a73e8; border: 2px solid #1a73e8; border-radius: 4px; cursor: pointer; font-weight: bold; font-family: monospace;">&#128203; Copy Name: {key_name}</button>
+        status_msg = "" # Used to display errors if they click the button too early
+
+        while True:
+            try:
+                # STATE 1: Vault Check
+                colab_key = userdata.get(key_name)
+                if colab_key:
+                    clear_output()
+                    if _validate_key(key_name, colab_key):
+                        os.environ[key_name] = colab_key
+                        clear_output()
+                        display(HTML(f"""
+                        <div style="background-color: #d4edda; padding: 15px; border-radius: 8px; border-left: 6px solid #28a745; max-width: 600px; font-family: sans-serif;">
+                            <h4 style="margin-top: 0; color: #155724; margin-bottom: 5px;">&#10004;&#65039; Key Authenticated & Active!</h4>
+                            <p style="margin-top: 0; color: #155724; margin-bottom: 0;">We verified <b>{key_name}</b> from your Secrets and securely loaded it. You are ready to fetch data!</p>
+                        </div>
+                        """))
+                        return
+                    else:
+                        status_msg = f"""
+                        <div style="background-color: #f8d7da; padding: 15px; border-radius: 8px; border-left: 6px solid #dc3545; max-width: 600px; font-family: sans-serif; margin-bottom: 15px;">
+                            <h4 style="margin-top: 0; color: #721c24; margin-bottom: 5px;">&#10060; Invalid Key Detected</h4>
+                            <p style="margin-top: 0; color: #721c24; margin-bottom: 0;">We found <b>{key_name}</b>, but authentication failed. Please fix any typos in the sidebar.</p>
+                        </div>
+                        """
+            except Exception as e:
+                # STATE 2: Locked (NotebookAccessError)
+                if "Access" in str(type(e).__name__):
+                    status_msg = f"""
+                    <div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 6px solid #ffc107; max-width: 600px; font-family: sans-serif; margin-bottom: 15px;">
+                        <h4 style="margin-top: 0; color: #856404; margin-bottom: 5px;">&#128273; Activation Required</h4>
+                        <p style="margin-top: 0; color: #856404; margin-bottom: 0;">We found <b>{key_name}</b>, but you forgot to toggle <b>"Notebook access"</b> to ON. Please toggle it and try again.</p>
+                    </div>
+                    """
+                else:
+                    pass # Doesn't exist yet, which is perfectly normal.
+
+            # --- STATE 3: THE SEAMLESS SETUP WIZARD ---
+            clear_output()
+            if status_msg:
+                display(HTML(status_msg))
+                status_msg = "" # Clear it so it doesn't loop forever
+
+            display(HTML(f"""
+            <div style="font-family: sans-serif; max-width: 600px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; margin-bottom: 15px;">
+                <div style="background-color: #f8f9fa; padding: 15px; border-bottom: 1px solid #ddd;">
+                    <h3 style="margin: 0; color: #1a73e8;">&#128274; {key_name} Setup Required</h3>
                 </div>
-                
-                <div id="step2" style="display: none; margin-bottom: 15px; border-top: 1px solid #ddd; padding-top: 15px;">
-                    <p><b>Step 2:</b> Prepare the Secret in Colab:</p>
-                    <ul style="margin-top: 5px;">
+                <div style="padding: 20px;">
+                    <p style="margin-top: 0; margin-bottom: 15px;">Follow these fast steps to securely store your API key:</p>
+                    <ol style="margin-top: 0; padding-left: 20px; line-height: 1.8; color: #333;">
+                        <li>Copy this exact name: <button onclick="navigator.clipboard.writeText('{key_name}'); this.innerHTML='&#9989; Copied!'; setTimeout(() => this.innerHTML='&#128203; {key_name}', 2000);" style="margin-left: 8px; padding: 4px 8px; background: #e8f0fe; color: #1a73e8; border: 1px solid #1a73e8; border-radius: 4px; cursor: pointer; font-family: monospace; font-weight: bold;">&#128203; {key_name}</button></li>
                         <li>Click the <b>Key Icon</b> (&#128273;) on the left sidebar.</li>
-                        <li>Click <b>"Add new secret"</b> and paste the Name in the left box.</li>
-                    </ul>
-                    <button onclick="document.getElementById('step2').style.opacity='0.5'; document.getElementById('step2').style.pointerEvents='none'; document.getElementById('step3').style.display='block';" style="padding: 8px 12px; background: #4285f4; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">&#9989; The Name is pasted!</button>
-                </div>
-                
-                <div id="step3" style="display: none; margin-bottom: 15px; border-top: 1px solid #ddd; padding-top: 15px;">
-                    <p><b>Step 3:</b> Add your API Key!</p>
-                    <ul style="margin-top: 5px;">
-                        <li>Copy your actual API Key from the LMS.</li>
-                        <li>Paste it into the <b>"Value"</b> box in Colab.</li>
-                        <li>Toggle <b>"Notebook access"</b> to ON.</li>
-                    </ul>
-                    <button onclick="document.getElementById('step3').style.opacity='0.5'; document.getElementById('step3').style.pointerEvents='none'; document.getElementById('step4').style.display='block';" style="padding: 8px 12px; background: #34a853; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">&#128640; Done! Lock it in.</button>
-                </div>
-                
-                <div id="step4" style="display: none; margin-top: 15px; color: #137333; font-weight: bold; background: #e6f4ea; padding: 15px; border-radius: 4px; line-height: 1.5;">
-                    &#127881; <b>Setup complete!</b><br><br>
-                    <span style="color: #0d652d; font-size: 0.95em;">&#128161; <b>Pro Tip:</b> This key is securely saved to your Google account! Please re-run this cell to load it.</span>
+                        <li>Click <b>"Add new secret"</b>.</li>
+                        <li>Paste the Name and your actual API Key.</li>
+                        <li>Toggle <b>"Notebook access"</b> to <span style="color: #1a73e8; font-weight: bold;">ON (Blue)</span>.</li>
+                    </ol>
+                    <button id="check-btn-{key_name}" style="margin-top: 15px; width: 100%; padding: 12px; background: #34a853; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: bold; transition: 0.2s;">
+                        &#10004;&#65039; I have added the key. Authenticate Now!
+                    </button>
                 </div>
             </div>
-        </div>
-        """))
-        
+
+            <script>
+              // This JavaScript promise suspends Python until the user clicks the button
+              window.promise_{key_name} = new Promise(function(resolve) {{
+                document.getElementById('check-btn-{key_name}').onclick = function() {{
+                  this.innerHTML = "&#8987; Authenticating...";
+                  this.style.backgroundColor = "#2d9249";
+                  this.style.pointerEvents = "none";
+                  resolve("clicked");
+                }};
+              }});
+            </script>
+            """))
+            # --- THE PAUSE TRAP ---
+            # Python sleeps here seamlessly. No ugly inputs!
+            try:
+                _ = output.eval_js(f"window.promise_{key_name}")
+            except KeyboardInterrupt:
+                clear_output()
+                print("\n\u26A0\uFE0F Setup cancelled by user.")
+                return
     else:
         # --- JUPYTER / BINDER LOGIC ---
         target_file = f".{key_name.lower()}"
-        
+
         # UI: Warning if existing file found (Local only)
         if not in_binder and os.path.exists(target_file):
             display(HTML(f"""<div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; border-left: 6px solid #ffc107; font-family: sans-serif; max-width: 600px; margin-bottom: 10px;"><h4 style="margin-top: 0; color: #856404; margin-bottom: 5px;">&#9888;&#65039; WARNING: Key Already Exists</h4><p style="margin-top: 5px; color: #856404; margin-bottom: 0;">A saved key was already found in your vault.</p></div>"""))
@@ -2155,29 +2209,45 @@ def secure_key_setup(key_name="FRED_KEY"):
         print(f"Enter your {key_name} (or type 'quit' to cancel):")
         while True:
             try:
-                key_input = getpass.getpass(prompt="> ")
-                if key_input.strip().lower() in ['q', 'quit', 'cancel', 'exit']:
-                    clear_output(); print("\n\u26A0\uFE0F Setup cancelled by user. No key was saved."); return 
-                if key_input.strip():
-                    clear_output(); break 
-                clear_output(); print("\u26A0\uFE0F Input cannot be empty. Please paste your key (or type 'quit' to cancel):")
+                key_input = getpass.getpass(prompt="> ").strip()
+                if key_input.lower() in ['q', 'quit', 'cancel', 'exit']:
+                    clear_output()
+                    print("\n\u26A0\uFE0F Setup cancelled by user. No key was saved.")
+                    return
+
+                if key_input:
+                    # VALIDATION INTERCEPT
+                    if _validate_key(key_name, key_input):
+                        clear_output()
+                        break
+                    else:
+                        clear_output()
+                        print(f"\u274C Invalid {key_name} detected! Authentication failed.")
+                        print(f"Please check for typos and try again (or type 'quit' to cancel):")
+                else:
+                    clear_output()
+                    print("\u26A0\uFE0F Input cannot be empty. Please paste your key (or type 'quit' to cancel):")
             except KeyboardInterrupt:
-                clear_output(); print("\n\u26A0\uFE0F Cell execution interrupted. Setup cancelled."); return
+                clear_output()
+                print("\n\u26A0\uFE0F Cell execution interrupted. Setup cancelled.")
+                return
 
         # INJECT INTO ENVIRONMENT IMMEDIATELY
-        os.environ[key_name] = key_input.strip()
+        os.environ[key_name] = key_input
 
         # Save Logic (Skip saving to disk if Binder)
         if in_binder:
-            display(HTML(f"""<div style="margin-top: 10px; color: #137333; font-weight: bold; background: #e6f4ea; padding: 15px; border-radius: 8px; border-left: 6px solid #34a853; max-width: 600px;">&#127881; <b>Success! Key securely loaded to environment.</b><br><span style="color: #0d652d; font-size: 0.9em;">(Remember: It will be cleared when this session ends.)</span></div>"""))
+            display(HTML(f"""<div style="margin-top: 10px; color: #137333; font-weight: bold; background: #e6f4ea; padding: 15px; border-radius: 8px; border-left: 6px solid #34a853; max-width: 600px;">&#127881; <b>Success! Key authenticated and loaded to environment.</b><br><span style="color: #0d652d; font-size: 0.9em;">(Remember: It will be cleared when this session ends.)</span></div>"""))
         else:
             try:
-                with open(target_file, "w") as f: f.write(key_input.strip())
+                with open(target_file, "w") as f: f.write(key_input)
                 try: os.chmod(target_file, 0o600)
                 except: pass
-                display(HTML(f"""<div style="margin-top: 10px; color: #137333; font-weight: bold; background: #e6f4ea; padding: 15px; border-radius: 8px; border-left: 6px solid #34a853; max-width: 600px;">&#127881; <b>Success! Your key has been safely vaulted in <code>{target_file}</code></b><br><span style="color: #0d652d; font-size: 0.9em;">&#128161; <b>Pro Tip:</b> Future notebooks will automatically load it!</span></div>"""))
+                display(HTML(f"""<div style="margin-top: 10px; color: #137333; font-weight: bold; background: #e6f4ea; padding: 15px; border-radius: 8px; border-left: 6px solid #34a853; max-width: 600px;">&#127881; <b>Success! Your key has been verified and safely vaulted in <code>{target_file}</code></b><br><span style="color: #0d652d; font-size: 0.9em;">&#128161; <b>Pro Tip:</b> Future notebooks will automatically load it!</span></div>"""))
             except Exception as e:
-                clear_output(); print(f"\n\u274C Error saving key: {e}")
+                clear_output()
+                print(f"\n\u274C Error saving key: {e}")
+
 
 
 def load_key_to_env(key_name="FRED_KEY"):
