@@ -11,7 +11,26 @@ includes shared functions
 
 """
 
+import sys
 
+# Define the exception class on GitHub
+class StopExecution(Exception):
+    """Silently halts cell execution without a massive red traceback."""
+    pass
+
+# Check if running inside IPython/Colab and register a silent handler
+try:
+    from IPython import get_ipython
+    ip = get_ipython()
+    if ip is not None:
+        def silent_handler(self, etype, value, tb, tb_offset=None):
+            # Returning an empty list or None tells IPython to print absolutely nothing
+            return None
+        
+        # Register this custom handler specifically for our StopExecution exception
+        ip.set_custom_exc((StopExecution,), silent_handler)
+except ImportError:
+    pass
 
 import requests
 import pandas as pd
